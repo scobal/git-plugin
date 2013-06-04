@@ -96,6 +96,8 @@ import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 
 import static hudson.Util.fixEmptyAndTrim;
+import java.net.URISyntaxException;
+import org.eclipse.jgit.transport.URIish;
 
 /**
  * Git SCM.
@@ -347,6 +349,34 @@ public class GitSCM extends SCM implements Serializable {
                 branches.add(new BranchSpec(branch));
             } else {
                 branches.add(new BranchSpec(DEFAULT_BRANCH));
+            }
+        }
+        
+        // Migration of data before 2.2.2 
+        for (RemoteConfig remoteConfig : remoteRepositories) {
+            List<URIish> gitUrisToAdd = new ArrayList<URIish>();
+            List<URIish> urisToRemove = new ArrayList<URIish>();
+            boolean needMigration = false;
+            for (URIish gitUri : remoteConfig.getURIs()) {
+                if ((gitUri.getRawPath() == null)) {
+                    try {
+                        gitUrisToAdd.add(gitUri.setRawPath(gitUri.getPath())); 
+                        needMigration = true;
+                    } catch (URISyntaxException ex) {
+                        LOGGER.log(Level.WARNING, "Failed to set RawParh", ex);
+                    }
+                } else {
+                    gitUrisToAdd.add(gitUri);
+                }
+                urisToRemove.add(gitUri);
+            }
+            if (needMigration) {
+                for (URIish gitUri : urisToRemove) { 
+                    remoteConfig.removeURI(gitUri);
+                }
+                for (URIish gitUri : gitUrisToAdd) {
+                    remoteConfig.addURI(gitUri); 
+                }
             }
         }
 
