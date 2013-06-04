@@ -54,7 +54,6 @@ import org.apache.commons.lang.StringUtils;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ListBranchCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
-import org.eclipse.jgit.api.errors.NoFilepatternException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -91,7 +90,7 @@ public class GitAPI implements IGitAPI {
                 File gitDir = RepositoryCache.FileKey.resolve(new File(workspace.getRemote()), FS.DETECTED);
                 jGitDelegate = Git.wrap(new FileRepositoryBuilder().setGitDir(gitDir).build());
             } catch (IOException e) {
-                e.printStackTrace();
+                e.printStackTrace(listener.getLogger());
             }
         }
     }
@@ -126,7 +125,11 @@ public class GitAPI implements IGitAPI {
         if (hasGitRepo()) {
             throw new GitException(Messages.GitAPI_Repository_FailedInitTwiceMsg());
         }
-        jGitDelegate = Git.init().setDirectory(new File(workspace.getRemote())).call();
+        try {
+            jGitDelegate = Git.init().setDirectory(new File(workspace.getRemote())).call();
+        } catch (GitAPIException ex) {
+            throw new GitException(ex);
+        }
     }
 
     public boolean hasGitRepo() throws GitException {
@@ -206,9 +209,9 @@ public class GitAPI implements IGitAPI {
         listener.getLogger().println(Messages.GitAPI_Repository_CloningRepositoryMsg(remoteConfig.getName()));
         try {
             workspace.deleteRecursive();
-        } catch (Exception e) {
-            e.printStackTrace(listener.error(Messages.GitAPI_Workspace_FailedCleanupMsg()));
-            throw new GitException(Messages.GitAPI_Workspace_FailedDeleteMsg(), e);
+        } catch (Exception ex) {
+            ex.printStackTrace(listener.error(Messages.GitAPI_Workspace_FailedCleanupMsg()));
+            throw new GitException(Messages.GitAPI_Workspace_FailedDeleteMsg(), ex);
         }
 
         // Assume only 1 URL for this repository
@@ -221,11 +224,15 @@ public class GitAPI implements IGitAPI {
 
                 public String invoke(File workspace,
                                      VirtualChannel channel) throws IOException {
-                    jGitDelegate = Git.cloneRepository()
-                        .setDirectory(workspace.getAbsoluteFile())
-                        .setURI(source.toPrivateString())
-                        .setRemote(remoteConfig.getName())
-                        .call();
+                    try {
+                        jGitDelegate = Git.cloneRepository()
+                            .setDirectory(workspace.getAbsoluteFile())
+                            .setURI(source.toPrivateString())
+                            .setRemote(remoteConfig.getName())
+                            .call();
+                    } catch (Exception ex) {
+                        throw new GitException(ex);
+                    } 
                     return Messages.GitAPI_Repository_CloneSuccessMsg(source.toPrivateString(),
                         workspace.getAbsolutePath());
                 }
@@ -237,7 +244,11 @@ public class GitAPI implements IGitAPI {
 
     public void clean() throws GitException {
         verifyGitRepository();
-        jGitDelegate.clean().call();
+        try {
+            jGitDelegate.clean().call();
+        } catch (Exception ex) {
+            throw new GitException(ex);
+        }  
     }
 
     public ObjectId revParse(String revName) throws GitException {
@@ -570,10 +581,11 @@ public class GitAPI implements IGitAPI {
             }
 
             origin = new URI(url);
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException ex) {
             // Sometimes the URI is of a form that we can't parse; like
             //   user@git.somehost.com:repository
             // In these cases, origin is null and it's best to just exit early.
+            ex.printStackTrace(listener.error("Could not parse the URI. Exiting ...")); 
             return;
         } catch (Exception e) {
             throw new GitException("Could determine remote.origin.url", e);
@@ -620,11 +632,13 @@ public class GitAPI implements IGitAPI {
                         setRemoteUrl("origin", sUrl, subGitDir);
                     }
                 }
-            } catch (GitException e) {
+            } catch (GitException ex) {
+                listener.getLogger().println(ex.getLocalizedMessage());
                 // this can fail for example HEAD doesn't exist yet
                 LOGGER.log(Level.FINEST, "Exception occurred while working with git repo.");
             }
         } else {
+            listener.getLogger().println("The origin is non-bare.");
             LOGGER.log(Level.FINER, "The origin is non-bare.");
             // we've made a reasonable attempt to detect whether the origin is
             // non-bare, so we'll just assume it is bare from here on out and
@@ -772,13 +786,23 @@ public class GitAPI implements IGitAPI {
 
     public List<Branch> getBranches() throws GitException {
         verifyGitRepository();
-        List<Ref> refList = jGitDelegate.branchList().setListMode(ListBranchCommand.ListMode.ALL).call();
+        List<Ref> refList;
+        try {
+            refList = jGitDelegate.branchList().setListMode(ListBranchCommand.ListMode.ALL).call();
+        } catch (GitAPIException ex) {
+            throw new GitException(ex);
+        }
         return parseRefList(refList);
     }
 
     public List<Branch> getRemoteBranches() throws GitException, IOException {
         verifyGitRepository();
-        List<Ref> refList = jGitDelegate.branchList().setListMode(ListBranchCommand.ListMode.REMOTE).call();
+        List<Ref> refList;
+        try {
+            refList = jGitDelegate.branchList().setListMode(ListBranchCommand.ListMode.REMOTE).call();
+        } catch (GitAPIException ex) {
+            throw new GitException(ex);
+        }
         return parseRefList(refList);
     }
 
@@ -884,7 +908,8 @@ public class GitAPI implements IGitAPI {
         RevWalk revWalk = new RevWalk(jGitDelegate.getRepository());
         try {
             revWalk.parseCommit(ObjectId.fromString(sha1));
-        } catch (IOException e) {
+        } catch (IOException ex) {
+            // Exception used for logic flow, so omitted
             return false;
         }
         return true;
@@ -894,9 +919,9 @@ public class GitAPI implements IGitAPI {
         verifyGitRepository();
         try {
             jGitDelegate.add().addFilepattern(filePattern).call();
-        } catch (NoFilepatternException ex) {
+        } catch (Exception ex) {
             throw new GitException(ex);
-        }
+        }  
     }
 
     public void branch(String name) throws GitException {
@@ -943,6 +968,7 @@ public class GitAPI implements IGitAPI {
             try {
                 result = launchCommand("merge-base", id1.name(), id2.name());
             } catch (GitException ge) {
+                ge.printStackTrace();
                 return null;
             }
 
