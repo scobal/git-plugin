@@ -181,6 +181,8 @@ public class GitSCM extends SCM implements Serializable {
     private String excludedRegions;
 
     private String excludedUsers;
+    
+    private Set<String> excludedCommits = new HashSet<String>();
 
     private String gitConfigName;
 
@@ -345,6 +347,7 @@ public class GitSCM extends SCM implements Serializable {
         this.skipTag = skipTag;
         this.includedRegions = includedRegions;
         buildChooser.gitSCM = this; // set the owner
+        this.excludedCommits = new HashSet<String>();
     }
 
 
@@ -447,6 +450,18 @@ public class GitSCM extends SCM implements Serializable {
 
     public String getExcludedRegions() {
         return excludedRegions;
+    }
+    
+    public Set<String> getExcludedCommits() {
+        return excludedCommits;
+    }
+    
+    public boolean addExcludedCommit(String sha1) {
+        if (excludedCommits == null) {
+            excludedCommits = new HashSet<String>();
+        }
+        return excludedCommits.add(sha1);
+
     }
 
     public String[] getExcludedRegionsNormalized() {
@@ -1504,8 +1519,17 @@ public class GitSCM extends SCM implements Serializable {
             IGitAPI git = new GitAPI(gitExe, workspace, listener, environment);
             String gitRepo = getParamExpandedRepos(lastBuild).get(0).getURIs().get(0).toString();
             String headRevision = git.getHeadRev(gitRepo, getBranches().get(0).getName());
-        
-            if(buildData.lastBuild.getRevision().getSha1String().equals(headRevision)) {
+            String lastBuildRevision = buildData.lastBuild.getRevision().getSha1String();
+
+            listener.getLogger().println("[poll] Head revision: " + headRevision);
+
+            if (lastBuildRevision.equals(headRevision)) {
+                return PollingResult.NO_CHANGES;
+            } else if (getExcludedCommits().contains(headRevision)) {
+                listener.getLogger().println("Ignored commit " + headRevision + ": This commit has been explicitly excluded from triggering builds.");
+                for (String commit : getExcludedCommits()) {
+                    listener.getLogger().println("[poll] Excluded commit: " + commit);
+                }
                 return PollingResult.NO_CHANGES;
             } else {
                 return PollingResult.BUILD_NOW;
@@ -1566,8 +1590,7 @@ public class GitSCM extends SCM implements Serializable {
                             fetchFrom(git, listener, remoteRepository);
                         }
 
-                        Collection<Revision> origCanditates = buildChooser.getCandidateRevisions(
-                            true, singleBranch, git, listener, buildData);
+                        Collection<Revision> origCanditates = buildChooser.getCandidateRevisions(true, singleBranch, git, listener, buildData);
 
                         for (Revision c : origCanditates) {
                             if (!isRevExcluded(git, c, listener)) {
@@ -1836,6 +1859,12 @@ public class GitSCM extends SCM implements Serializable {
                 return false;
             }
 
+            // Has this revision been specifically excluded?
+            if (excludedCommits.contains(r.getSha1String())) {
+                listener.getLogger().println("Ignored commit " + r.getSha1String() + ": This commit has been explicitly excluded from triggering builds.");
+                return true;
+            }
+            
             GitChangeSet change = new GitChangeSet(revShow, authorOrCommitter);
 
             Pattern[] includedPatterns = getIncludedRegionsPatterns();
