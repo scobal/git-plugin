@@ -1097,6 +1097,11 @@ public class GitAPI implements IGitAPI {
         args.add(remoteRepoUrl);
         args.add(branch);
         String result = launchCommand(args);
+        String[] results = result.split("\n");
+        if(results.length > 0){
+            //if ls-remote returns a banner, we want the last line
+            result = results[results.length-1];
+        }
         return result.length()>=40 ? result.substring(0,40) : "";
     }
 }
