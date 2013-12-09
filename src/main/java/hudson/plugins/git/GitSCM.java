@@ -1010,17 +1010,23 @@ public class GitSCM extends SCM implements Serializable {
 
                     // Go through the repositories, trying to clone from one
                     //
+                    int retries = 10;
                     boolean successfullyCloned = false;
-                    for (RemoteConfig rc : paramRepos) {
-                        try {
-                            git.clone(rc);
-                            successfullyCloned = true;
-                            break;
-                        } catch (GitException ex) {
-                            ex.printStackTrace(listener.error("Error cloning remote repo '%s' ", rc.getName())); 
-                            // Failed. Try the next one
-                            listener.getLogger().println("Trying next repository");
+                    outer: for (int i = 0; i < retries; i++) {
+                        for (RemoteConfig rc : paramRepos) {
+                            try {
+                                git.clone(rc);
+                                successfullyCloned = true;
+                                break outer;
+                            } catch (GitException ex) {
+                                ex.printStackTrace(listener.error("Error cloning remote repo '%s' ", rc.getName()));
+                                // Failed. Try the next one
+                                listener.getLogger().println("Trying next repository");
+                            }
                         }
+                        int secs = 10;
+                        listener.getLogger().println("No repositories cloned! Sleeping for " + secs + " secs after attempt " + (i + 1) + " of " + retries);
+                        sleep(secs);
                     }
 
                     if (!successfullyCloned) {
@@ -1068,6 +1074,13 @@ public class GitSCM extends SCM implements Serializable {
                     return null;
                 }
                 return candidates.iterator().next();
+            }
+
+            private void sleep(int secs) {
+                try {
+                    Thread.sleep(secs * 1000);
+                } catch (InterruptedException e) {
+                }
             }
         });
     }
